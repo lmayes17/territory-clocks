@@ -46,3 +46,11 @@ At the top of the script:
 - **DST.** Handled by the browser's time zone database. Arizona stays on MST year-round. Indiana follows Eastern with DST.
 - **The rep's own zone** comes from the PC clock. Remote staff in Indiana or Tennessee get the correct "hrs behind/ahead" automatically.
 - **Frames.** It skips iframes (Enabled+ has two), so the bar shows up only once.
+
+## IT deployment (tm.json)
+
+- `tm.json` is the setup file IT's Chrome policy points at: `https://raw.githubusercontent.com/lmayes17/territory-clocks/main/tm.json`
+- Format: Tampermonkey JSON export (`version`, `scripts[]` with `name`, `enabled`, `position`, `uuid`, base64 `source`). Built from the dashboard's per-script zip export, because the Utilities export has no way to pick scripts. No `settings` block, so reps keep their own Tampermonkey settings. No script storage.
+- The `uuid` matches the installed script, so re-imports update the same script instead of adding a copy.
+- The script inside `tm.json` is a snapshot. Installed copies should self-update from `@updateURL`. The pilot needs to confirm that, and that a restart doesn't roll a script back to the tm.json copy. If either fails, rebuild `tm.json` on every release and IT updates the hash.
+- Tampermonkey stable ID: `dhdgffkkebhmkfjojejmpbldmpobfkfo`. The docs' example ID is the Beta build.
