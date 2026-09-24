@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Territory Clocks (Enabled+)
 // @namespace    rba-isc
-// @version      2.0.2
+// @version      2.1.0
 // @description  Shows the homeowner's local time on the lead, plus a territory clock bar
 // @match        https://www.enabledplus.com/*
 // @match        https://enabledplus.com/*
@@ -23,7 +23,8 @@
     { label: 'Central',  tz: 'America/Chicago' },
     { label: 'Pacific',  tz: 'America/Los_Angeles' },
   ];
-  const CALL_WINDOW = { start: 9, end: 21 }; // homeowner local hours considered OK to call
+  // OK-to-call hours in the HOMEOWNER's local time. end = first hour that's NOT ok (20 = 8pm).
+  const CALL_WINDOWS = { weekday: { start: 8, end: 20 }, weekend: { start: 9, end: 20 } };
   // ----------------------------
 
   // State -> default zone
@@ -85,6 +86,12 @@
     return (Date.UTC(+p.year, p.month - 1, +p.day, p.hour % 24, +p.minute) - d.getTime()) / 60000;
   }
   const MY_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  function okToCall(tz, d) {
+    const day = fmt(tz, { weekday: 'short' }).format(d);
+    const w = (day === 'Sat' || day === 'Sun') ? CALL_WINDOWS.weekend : CALL_WINDOWS.weekday;
+    const h = hourIn(tz, d);
+    return h >= w.start && h < w.end;
+  }
 
   function zoneFor(text) {
     const m = /,\s*([A-Z]{2})\s+(\d{5})/.exec(text || '') || /\b([A-Z]{2})\s+(\d{5})\b/.exec(text || '');
@@ -98,11 +105,11 @@
   // ---------- styles ----------
   const style = document.createElement('style');
   style.textContent = `
-    #tzc-badge{display:inline-flex;align-items:center;gap:8px;margin:6px 0 2px;padding:4px 10px;border-radius:6px;
-      font:600 13px/1.3 Segoe UI,Arial,sans-serif;background:#e6f4ea;color:#14532d;border:1px solid #86efac}
+    #tzc-badge{display:inline-block;margin-left:6px;padding:0 5px;border-radius:4px;white-space:nowrap;vertical-align:baseline;
+      font:600 11px/16px Segoe UI,Arial,sans-serif;background:#e6f4ea;color:#14532d;border:1px solid #86efac;
+      user-select:none;-webkit-user-select:none}
     #tzc-badge.late{background:#fee2e2;color:#7f1d1d;border-color:#fca5a5}
-    #tzc-badge .tzc-sub{font-weight:400;font-size:11px;opacity:.85}
-    #tzc-badge .tzc-verify{font-weight:600;font-size:10px;background:#fef3c7;color:#78350f;padding:1px 5px;border-radius:4px}
+    #tzc-badge .tzc-verify{margin-left:4px;background:#fef3c7;color:#78350f;padding:0 3px;border-radius:3px}
     #tzc-bar{position:fixed;z-index:2147483646;display:flex;align-items:center;gap:6px;background:#1f2937;color:#fff;
       font:12px/1.2 Segoe UI,Arial,sans-serif;padding:4px 8px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.3);
       user-select:none;opacity:.95}
@@ -121,26 +128,33 @@
 
   function renderBadge() {
     const addr = document.querySelector('#leadinformation .city-state-zip');
-    const existing = document.getElementById('tzc-badge');
-    if (!addr) { if (existing) existing.remove(); current = null; return; }
-    const z = zoneFor(addr.textContent);
+    let badge = document.getElementById('tzc-badge');
+    if (!addr) { if (badge) badge.remove(); current = null; return; }
+    // Read the address without our own badge text
+    const text = [...addr.childNodes].filter(n => n !== badge).map(n => n.textContent).join('');
+    const z = zoneFor(text);
     current = z;
-    let badge = existing;
-    if (!badge) {
-      badge = document.createElement('div');
+    if (!badge || badge.parentElement !== addr) {
+      if (badge) badge.remove();
+      badge = document.createElement('span');
       badge.id = 'tzc-badge';
-      addr.insertAdjacentElement('afterend', badge);
-    } else if (badge.previousElementSibling !== addr) {
-      addr.insertAdjacentElement('afterend', badge);
+      addr.appendChild(badge); // same line as city/state/zip, nothing pushed down
     }
-    if (!z) { badge.className = ''; badge.textContent = 'Homeowner time: no zip on lead'; return; }
-    const now = new Date();
-    const h = hourIn(z.tz, now);
-    const diffH = (offsetMin(z.tz, now) - offsetMin(MY_TZ, now)) / 60;
-    const rel = diffH === 0 ? 'same as you' : `${Math.abs(diffH)} hr${Math.abs(diffH) === 1 ? '' : 's'} ${diffH < 0 ? 'behind' : 'ahead of'} you`;
-    badge.className = (h < CALL_WINDOW.start || h >= CALL_WINDOW.end) ? 'late' : '';
-    badge.innerHTML = `🕒 Homeowner time: ${timeIn(z.tz, now)} ${TZ_SHORT[z.tz] || ''}
-      <span class="tzc-sub">${rel}</span>${z.mixed ? '<span class="tzc-verify" title="This zip area crosses a time zone line. Confirm with the homeowner.">verify</span>' : ''}`;
+    let cls = '', html;
+    if (!z) {
+      html = '🕒 no zip';
+    } else {
+      const now = new Date();
+      const diffH = Math.round((offsetMin(z.tz, now) - offsetMin(MY_TZ, now)) / 30) / 2; // nearest half hour
+      const rel = diffH === 0 ? '' : ` · ${diffH > 0 ? '+' : '−'}${Math.abs(diffH)}h`;
+      cls = okToCall(z.tz, now) ? '' : 'late';
+      html = `🕒 ${timeIn(z.tz, now)} ${TZ_SHORT[z.tz] || ''}${rel}` +
+        (z.mixed ? '<span class="tzc-verify" title="This zip area crosses a time zone line. Confirm with the homeowner.">verify</span>' : '');
+      badge.title = okToCall(z.tz, now) ? "Homeowner's local time. OK to call." : "Homeowner's local time. Outside calling hours.";
+    }
+    // Only touch the DOM when something changed, so it never disturbs a rep selecting the phone number
+    if (badge.className !== cls) badge.className = cls;
+    if (badge._tzcHtml !== html) { badge.innerHTML = html; badge._tzcHtml = html; }
   }
 
   // ---------- territory bar ----------
@@ -161,9 +175,9 @@
     const now = new Date();
     const curOff = current ? offsetMin(current.tz, now) : null;
     items.forEach(i => {
-      i.timeEl.textContent = timeIn(i.t.tz, now);
-      const h = hourIn(i.t.tz, now);
-      i.timeEl.classList.toggle('tzc-late', h < CALL_WINDOW.start || h >= CALL_WINDOW.end);
+      const t = timeIn(i.t.tz, now);
+      if (i.timeEl.textContent !== t) i.timeEl.textContent = t;
+      i.timeEl.classList.toggle('tzc-late', !okToCall(i.t.tz, now));
       i.el.classList.toggle('tzc-hit', curOff !== null && offsetMin(i.t.tz, now) === curOff);
     });
   }

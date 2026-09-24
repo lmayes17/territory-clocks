@@ -2,7 +2,7 @@
 
 Tampermonkey script for Enabled+. Two pieces:
 
-1. **Homeowner time badge** on every lead, right under the city/state/zip. Shows the homeowner's local time, the time zone, and how far ahead or behind the rep they are. Turns red outside 9am to 9pm homeowner time.
+1. **Homeowner time badge** on every lead, right under the city/state/zip. A small tag on the same line as the city/state/zip: homeowner's local time, zone, and hours ahead/behind the rep (e.g. `🕒 8:38 AM PT · −3h`). Red outside calling hours in the homeowner's local time: 8a to 8p weekdays, 9a to 8p Sat/Sun.
 2. **Territory clock bar**, floating on every Enabled+ page. Eastern, Central, Pacific. The zone that matches the lead on screen lights up green. Drag to move. Double-click the clock icon to collapse.
 
 Nothing leaves the browser. The script reads the zip that's already on the page and does the math locally.
@@ -35,7 +35,7 @@ The repo needs to be public, or reps need read access, for the raw link to work.
 At the top of the script:
 
 - `TERRITORIES`: the bar's zones. Rename or remove as needed.
-- `CALL_WINDOW`: the hours that count as OK to call, in homeowner time.
+- `CALL_WINDOWS`: OK-to-call hours in homeowner local time, weekday and weekend. `end` is the first hour that's not OK (20 = 8pm).
 
 ## Build notes
 
@@ -54,3 +54,7 @@ At the top of the script:
 - The `uuid` matches the installed script, so re-imports update the same script instead of adding a copy.
 - The script inside `tm.json` is a snapshot. Installed copies should self-update from `@updateURL`. The pilot needs to confirm that, and that a restart doesn't roll a script back to the tm.json copy. If either fails, rebuild `tm.json` on every release and IT updates the hash.
 - Tampermonkey stable ID: `dhdgffkkebhmkfjojejmpbldmpobfkfo`. The docs' example ID is the Beta build.
+
+## Change log
+
+- **2.1.0**: Badge moved inline on the city/state/zip line and shrunk to one short tag. The old badge sat between the address and the phone number and wrapped to two lines, which got in the way of reps copying the number. The badge is also unselectable now and only redraws when the time actually changes, so it can't interrupt a selection. Fixed hours-behind showing `3.0000000000000004` (floating point; now rounded to the nearest half hour). Calling hours now 8a to 8p weekdays, 9a to 8p weekends, homeowner local time; was 9a to 9p every day. `tm.json` not rebuilt: installed copies update from `@updateURL`, and rebuilding would change the hash IT set.
