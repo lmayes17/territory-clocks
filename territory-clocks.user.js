@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Territory Clocks (Enabled+)
 // @namespace    rba-isc
-// @version      2.1.0
+// @version      2.2.0
 // @description  Shows the homeowner's local time on the lead, plus a territory clock bar
 // @match        https://www.enabledplus.com/*
 // @match        https://enabledplus.com/*
@@ -105,15 +105,20 @@
   // ---------- styles ----------
   const style = document.createElement('style');
   style.textContent = `
-    #tzc-badge{display:inline-block;margin-left:6px;padding:0 5px;border-radius:4px;white-space:nowrap;vertical-align:baseline;
-      font:600 11px/16px Segoe UI,Arial,sans-serif;background:#e6f4ea;color:#14532d;border:1px solid #86efac;
+    #tzc-badge{display:inline-block;margin:6px 0 0 4px;padding:2px 8px;border-radius:5px;white-space:nowrap;
+      font:600 12px/18px Segoe UI,Arial,sans-serif;background:#e6f4ea;color:#14532d;border:1px solid #86efac;
       user-select:none;-webkit-user-select:none}
+    #tzc-badge .tzc-sub{font-weight:400;opacity:.85}
     #tzc-badge.late{background:#fee2e2;color:#7f1d1d;border-color:#fca5a5}
     #tzc-badge .tzc-verify{margin-left:4px;background:#fef3c7;color:#78350f;padding:0 3px;border-radius:3px}
     #tzc-bar{position:fixed;z-index:2147483646;display:flex;align-items:center;gap:6px;background:#1f2937;color:#fff;
       font:12px/1.2 Segoe UI,Arial,sans-serif;padding:4px 8px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.3);
       user-select:none;opacity:.95}
     #tzc-bar .tzc-handle{cursor:move;padding:0 4px}
+    #tzc-bar .tzc-min{cursor:pointer;margin-left:4px;padding:0 6px;border-radius:4px;font-size:14px;line-height:18px;color:#9ca3af}
+    #tzc-bar .tzc-min:hover{background:#374151;color:#fff}
+    #tzc-bar.collapsed .tzc-min{display:none}
+    #tzc-bar.collapsed .tzc-handle{cursor:pointer}
     #tzc-bar .tzc-list{display:flex;gap:10px}
     #tzc-bar .tzc-item{display:flex;flex-direction:column;align-items:center;min-width:58px}
     #tzc-bar .tzc-label{font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.03em}
@@ -130,29 +135,26 @@
     const addr = document.querySelector('#leadinformation .city-state-zip');
     let badge = document.getElementById('tzc-badge');
     if (!addr) { if (badge) badge.remove(); current = null; return; }
-    // Read the address without our own badge text
-    const text = [...addr.childNodes].filter(n => n !== badge).map(n => n.textContent).join('');
-    const z = zoneFor(text);
+    const z = zoneFor(addr.textContent);
     current = z;
-    if (!badge || badge.parentElement !== addr) {
-      if (badge) badge.remove();
-      badge = document.createElement('span');
-      badge.id = 'tzc-badge';
-      addr.appendChild(badge); // same line as city/state/zip, nothing pushed down
-    }
+    // Sits on its own line under "Customer consent for calling rights", out of the way of the phone number
+    const anchor = document.getElementById('leadconsentinformation') || document.getElementById('leadinformation');
+    if (!badge) { badge = document.createElement('div'); badge.id = 'tzc-badge'; }
+    if (badge.previousElementSibling !== anchor) anchor.insertAdjacentElement('afterend', badge);
     let cls = '', html;
     if (!z) {
-      html = '🕒 no zip';
+      html = '🕒 Homeowner time: no zip on lead';
     } else {
       const now = new Date();
       const diffH = Math.round((offsetMin(z.tz, now) - offsetMin(MY_TZ, now)) / 30) / 2; // nearest half hour
-      const rel = diffH === 0 ? '' : ` · ${diffH > 0 ? '+' : '−'}${Math.abs(diffH)}h`;
-      cls = okToCall(z.tz, now) ? '' : 'late';
-      html = `🕒 ${timeIn(z.tz, now)} ${TZ_SHORT[z.tz] || ''}${rel}` +
+      const rel = diffH === 0 ? 'same as you' : `${Math.abs(diffH)}h ${diffH < 0 ? 'behind' : 'ahead of'} you`;
+      const ok = okToCall(z.tz, now);
+      cls = ok ? '' : 'late';
+      badge.title = ok ? 'Inside calling hours for the homeowner.' : 'Outside calling hours for the homeowner.';
+      html = `🕒 Homeowner time: ${timeIn(z.tz, now)} ${TZ_SHORT[z.tz] || ''} <span class="tzc-sub">· ${rel}</span>` +
         (z.mixed ? '<span class="tzc-verify" title="This zip area crosses a time zone line. Confirm with the homeowner.">verify</span>' : '');
-      badge.title = okToCall(z.tz, now) ? "Homeowner's local time. OK to call." : "Homeowner's local time. Outside calling hours.";
     }
-    // Only touch the DOM when something changed, so it never disturbs a rep selecting the phone number
+    // Only touch the DOM when something changed
     if (badge.className !== cls) badge.className = cls;
     if (badge._tzcHtml !== html) { badge.innerHTML = html; badge._tzcHtml = html; }
   }
@@ -160,7 +162,7 @@
   // ---------- territory bar ----------
   const bar = document.createElement('div');
   bar.id = 'tzc-bar';
-  bar.innerHTML = '<div class="tzc-handle" title="Drag to move. Double-click to collapse.">🕒</div><div class="tzc-list"></div>';
+  bar.innerHTML = '<div class="tzc-handle" title="Drag to move">🕒</div><div class="tzc-list"></div><div class="tzc-min" title="Minimize">–</div>';
   document.body.appendChild(bar);
   const list = bar.querySelector('.tzc-list');
   const items = TERRITORIES.map(t => {
@@ -188,14 +190,23 @@
   if (GM_getValue('collapsed', false)) bar.classList.add('collapsed');
 
   const handle = bar.querySelector('.tzc-handle');
-  handle.addEventListener('dblclick', () => {
-    bar.classList.toggle('collapsed');
-    GM_setValue('collapsed', bar.classList.contains('collapsed'));
-  });
+  function setCollapsed(c) {
+    bar.classList.toggle('collapsed', c);
+    handle.title = c ? 'Show clocks' : 'Drag to move';
+    GM_setValue('collapsed', c);
+  }
+  handle.title = bar.classList.contains('collapsed') ? 'Show clocks' : 'Drag to move';
+  bar.querySelector('.tzc-min').addEventListener('click', () => setCollapsed(true));
+  let dragged = false;
+  handle.addEventListener('click', () => { if (!dragged && bar.classList.contains('collapsed')) setCollapsed(false); });
   handle.addEventListener('mousedown', e => {
     e.preventDefault();
     const r = bar.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+    const sx = e.clientX, sy = e.clientY;
+    dragged = false;
     const move = ev => {
+      if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 3) dragged = true;
+      if (!dragged) return;
       bar.style.right = bar.style.bottom = 'auto';
       bar.style.left = Math.max(0, Math.min(window.innerWidth - 40, ev.clientX - dx)) + 'px';
       bar.style.top = Math.max(0, Math.min(window.innerHeight - 20, ev.clientY - dy)) + 'px';
@@ -203,7 +214,7 @@
     const up = () => {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
-      GM_setValue('pos', { left: parseInt(bar.style.left, 10), top: parseInt(bar.style.top, 10) });
+      if (dragged) GM_setValue('pos', { left: parseInt(bar.style.left, 10), top: parseInt(bar.style.top, 10) });
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
